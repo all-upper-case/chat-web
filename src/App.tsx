@@ -1,38 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './lib/supabase';
 import Chat from './components/Chat';
-import Conversations from './components/Conversations';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
-  const [conversationId, setConversationId] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      setUser(data.user);
-      if (data.user) {
-        const { data: convs } = await supabase
-          .from('conversations')
-          .select('id')
-          .eq('user_id', data.user.id)
-          .order('created_at', { ascending: false })
-          .limit(1);
-        if (convs && convs[0]) setConversationId(convs[0].id);
-      }
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_e, session) => {
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        const { data: convs } = await supabase
-          .from('conversations')
-          .select('id')
-          .eq('user_id', session.user.id)
-          .order('created_at', { ascending: false })
-          .limit(1);
-        setConversationId(convs?.[0]?.id ?? null);
-      } else {
-        setConversationId(null);
-      }
     });
     return () => sub?.subscription.unsubscribe();
   }, []);
@@ -62,22 +38,7 @@ export default function App() {
         </div>
       </header>
       <main className="flex-1 min-h-0">
-        {user ? (
-          <div className="flex h-full">
-            <aside className="w-72 border-r overflow-y-auto">
-              <Conversations userId={user.id} onOpen={setConversationId} />
-            </aside>
-            <section className="flex-1 overflow-hidden">
-              {conversationId ? (
-                <Chat conversationId={conversationId} />
-              ) : (
-                <div className="p-6 text-gray-500">Pick or create a chat from the left.</div>
-              )}
-            </section>
-          </div>
-        ) : (
-          <div className="p-6 text-zinc-600">Sign in to start chatting.</div>
-        )}
+        {user ? <Chat /> : <div className="p-6 text-zinc-600">Sign in to start chatting.</div>}
       </main>
     </div>
   );

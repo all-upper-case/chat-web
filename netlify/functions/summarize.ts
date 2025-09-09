@@ -1,16 +1,11 @@
 import type { Handler } from '@netlify/functions';
 
 const API_URL = 'https://api.mistral.ai/v1/chat/completions';
-const DEFAULT_MODEL = 'mistral-small-latest';
-const DEFAULT_PROMPT = `You are a highly capable summarization assistant. Read the provided snippet of the ongoing conversation between a user and an assistant, and produce concise summaries of both the user's input and the assistant's response in this format:
+const SUMMARIZER_MODEL = 'mistral-small-latest';
 
-[User Summary]
-<summary>
-
-[Assistant Summary]
-<summary>
-
-Keep essential details (characters, rules/guidance, plot points, instructions), aggressively condense fluff. If multiple topics exist, cover each briefly.`;
+const SYSTEM = `You are a concise conversation summarizer.
+Summarize the prior turns faithfully. Keep facts and decisions. Omit fluff.
+Return a single paragraph (5–10 sentences).`;
 
 export const handler: Handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
@@ -19,18 +14,15 @@ export const handler: Handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { transcript = '', model, prompt } = body;
+    const { transcript = '' } = body;
     if (!transcript || typeof transcript !== 'string') {
       return { statusCode: 400, body: 'transcript (string) required' };
     }
 
-    const chosenModel = typeof model === 'string' && model.trim().length > 0 ? model : DEFAULT_MODEL;
-    const systemPrompt = typeof prompt === 'string' && prompt.trim().length > 0 ? prompt : DEFAULT_PROMPT;
-
     const payload = {
-      model: chosenModel,
+      model: SUMMARIZER_MODEL,
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: SYSTEM },
         { role: 'user', content: transcript }
       ],
       temperature: 0.2,
