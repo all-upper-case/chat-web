@@ -1,4 +1,3 @@
-// Netlify Function that calls Mistral securely (Node 18 has global fetch)
 import type { Handler } from '@netlify/functions';
 
 const API_URL = 'https://api.mistral.ai/v1/chat/completions';
@@ -11,13 +10,21 @@ export const handler: Handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { messages, model = 'mistral-large-latest', temperature = 0.7, safe_prompt = false } = body;
+
+    const {
+      messages,
+      model = 'mistral-large-latest',
+      temperature = 0.7,
+      max_tokens = 2048,
+      safe_prompt = false
+    } = body;
+
     if (!Array.isArray(messages)) return { statusCode: 400, body: 'messages must be an array' };
 
     const resp = await fetch(API_URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, temperature, safe_prompt })
+      body: JSON.stringify({ model, messages, temperature, max_tokens, safe_prompt })
     });
 
     const text = await resp.text();
@@ -25,7 +32,11 @@ export const handler: Handler = async (event) => {
 
     const data = JSON.parse(text);
     const content = data?.choices?.[0]?.message?.content ?? '';
-    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, usage: data.usage || {} }) };
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, usage: data.usage || {} })
+    };
   } catch (e: any) {
     return { statusCode: 500, body: String(e?.message || e) };
   }
