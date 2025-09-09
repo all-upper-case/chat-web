@@ -24,5 +24,7 @@ export interface SettingsRow {
   temperature: number;
   max_tokens: number;
   safe_prompt: boolean;
+  summarizer_model?: string;
+  summarizer_prompt?: string;
   updated_at?: string;
 }

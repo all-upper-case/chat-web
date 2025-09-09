@@ -19,9 +19,9 @@ export default function MessageItem({
 }: {
   m: Message;
   i: number;
-  onSave: (i: number, text: string) => void;
-  onDelete: () => void;
-  onRegen: () => void;
+  onSave: (i: number, text: string) => void | Promise<void>;
+  onDelete: () => void | Promise<void>;
+  onRegen: () => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(m.content);

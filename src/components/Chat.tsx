@@ -12,34 +12,9 @@ const KEEP_RECENT = 10;       // keep this many most recent rows verbatim when s
 function log(...args: any[]) { console.log(`[${ts()}]`, ...args); }
 function logError(label: string, err: any) { console.error(`[${ts()}] ${label}:`, err); }
 
-async function ensureConversation(): Promise<Conversation | null> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
-
-    const { data: convs, error } = await supabase.from('conversations')
-      .select('*').order('created_at', { ascending: false }).limit(1);
-    if (error) { logError('ensureConversation select', error); return null; }
-
-    let conv = convs?.[0] as Conversation | undefined;
-    if (!conv) {
-      const { data: ins, error: e1 } = await supabase
-        .from('conversations').insert({ user_id: user.id }).select('*').single();
-      if (e1 || !ins) { logError('ensureConversation insert', e1); return null; }
-      conv = ins as Conversation;
-
-      const { error: seedErr } = await supabase.from('messages').insert({
-        conversation_id: conv.id, role: 'system', content: 'You are a helpful assistant.', idx: 0
-      });
-      if (seedErr) logError('seed system', seedErr);
-    }
-    return conv!;
-  } catch (e) { logError('ensureConversation unexpected', e); return null; }
-}
-
 async function fetchMessages(conversation_id: string): Promise<Message[]> {
   const { data, error } = await supabase.from('messages')
-    .select('*').eq('conversation_id', conversation_id).order('idx');
+    .select('*').eq('conversation_id', conversation_id).order('created_at', { ascending: true });
   if (error) { logError('fetchMessages', error); return []; }
   return (data as Message[]) || [];
 }
@@ -51,7 +26,7 @@ async function loadSettings(): Promise<Partial<SettingsRow>> {
   return (data as SettingsRow) || {};
 }
 
-export default function Chat() {
+export default function Chat({ conversationId }: { conversationId: string }) {
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<string>('Ready');
@@ -63,24 +38,37 @@ export default function Chat() {
 
   useEffect(() => {
     (async () => {
-      setStatus('Ensuring conversation…');
-      const c = await ensureConversation();
-      if (!c) { setStatus('Failed to create/load conversation'); return; }
-      setConv(c);
-      setStatus('Loading messages…');
-      const msgs = await fetchMessages(c.id);
+      setStatus('Loading conversation…');
+      const { data: convData, error } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('id', conversationId)
+        .single();
+      if (error || !convData) { setStatus('Failed to load conversation'); return; }
+      setConv(convData as Conversation);
+
+      let msgs = await fetchMessages(conversationId);
+      if (msgs.length === 0) {
+        await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          role: 'system',
+          content: 'You are a helpful assistant.',
+          idx: 0
+        });
+        msgs = await fetchMessages(conversationId);
+      }
       setMessages(msgs);
       setSettings(await loadSettings());
       setStatus('Ready');
     })();
-  }, []);
+  }, [conversationId]);
 
   const reload = async () => {
-    if (!conv) return;
+    if (!conversationId) return;
     setStatus('Reloading…');
-    const updated = await supabase.from('conversations').select('*').eq('id', conv.id).single();
+    const updated = await supabase.from('conversations').select('*').eq('id', conversationId).single();
     if (!updated.error) setConv(updated.data as Conversation);
-    setMessages(await fetchMessages(conv.id));
+    setMessages(await fetchMessages(conversationId));
     setSettings(await loadSettings());
     setStatus('Ready');
   };
@@ -110,7 +98,6 @@ export default function Chat() {
 
     setStatus('Summarizing older turns…');
 
-    // Keep system (idx 0) + last KEEP_RECENT turns; summarize the middle chunk
     const keepHead = 1;
     const cutStart = keepHead;
     const cutEnd = Math.max(messages.length - KEEP_RECENT, keepHead);
@@ -119,21 +106,22 @@ export default function Chat() {
 
     const transcript = middle.map(m => `[${m.role.toUpperCase()}] ${m.content}`).join('\n\n');
 
-    // Call summarize function
     const resp = await fetch('/.netlify/functions/summarize', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript })
+      body: JSON.stringify({
+        transcript,
+        model: settings.summarizer_model ?? 'mistral-small-latest',
+        prompt: settings.summarizer_prompt ?? ''
+      })
     });
     const txt = await resp.text();
     if (!resp.ok) { logError('summarize failed', txt); setStatus('Ready'); return; }
     const { summary } = JSON.parse(txt);
 
-    // Save to conversations.running_summary (append)
     const running = (conv.running_summary || '').trim();
     const newSummary = running ? `${running}\n\n${summary}` : summary;
     await supabase.from('conversations').update({ running_summary: newSummary }).eq('id', conv.id);
 
-    // Delete middle rows and re-index everything
     for (const m of middle) await supabase.from('messages').delete().eq('id', m.id as string);
     const fresh = await fetchMessages(conv.id);
     for (let j = 0; j < fresh.length; j++) {
@@ -152,10 +140,13 @@ export default function Chat() {
     setMessages(prev => prev.concat([{ ...userMsg } as any]));
     setStatus('Sending…');
 
-    // persist user
     supabase.from('messages').insert(userMsg).then(({ error }) => error && logError('insert user', error));
 
-    // build payload with optional running summary prepended as a system hint
+    if (messages.length === 1) {
+      const title = content.replace(/\s+/g, ' ').slice(0, 60);
+      supabase.from('conversations').update({ title }).eq('id', conversationId);
+    }
+
     const base = messages.concat([{ role: 'user', content, idx: userIdx } as any])
       .map(m => ({ role: m.role, content: m.content }));
 
@@ -174,7 +165,6 @@ export default function Chat() {
       if (e2) logError('insert assistant', e2);
       setStatus('Ready');
 
-      // maybe summarize when it grows
       await maybeSummarize();
     } catch (e: any) {
       logError('send callAssistant', e);
@@ -203,7 +193,6 @@ export default function Chat() {
       if (!m.id) await reload();
       const { error } = await supabase.from('messages').delete().eq('id', m.id as string);
       if (error) { logError('delete', error); alert(`Delete failed: ${error.message ?? error}`); }
-      // reindex
       const fresh = await fetchMessages(conv!.id);
       for (let j = 0; j < fresh.length; j++) {
         if (fresh[j].idx !== j) await supabase.from('messages').update({ idx: j }).eq('id', fresh[j].id as string);
@@ -220,7 +209,6 @@ export default function Chat() {
     if (cutAt < 0) { alert('Cannot regenerate before first user turn.'); return; }
 
     setStatus('Regenerating…');
-    // delete tail
     for (const t of messages.slice(cutAt + 1)) { if (t.id) await supabase.from('messages').delete().eq('id', t.id as string); }
 
     const kept = messages.slice(0, cutAt + 1).map(m => ({ role: m.role, content: m.content }));
@@ -271,7 +259,7 @@ export default function Chat() {
       <Composer onSend={send} />
 
       <Settings
-        conversationId={conv?.id ?? null}
+        conversationId={conversationId}
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onChanged={reload}

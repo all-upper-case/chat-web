@@ -1,9 +1,8 @@
 import type { Handler } from '@netlify/functions';
 
 const API_URL = 'https://api.mistral.ai/v1/chat/completions';
-const SUMMARIZER_MODEL = 'mistral-small-latest';
 
-const SYSTEM = `You are a concise conversation summarizer.
+const DEFAULT_PROMPT = `You are a concise conversation summarizer.
 Summarize the prior turns faithfully. Keep facts and decisions. Omit fluff.
 Return a single paragraph (5–10 sentences).`;
 
@@ -14,15 +13,15 @@ export const handler: Handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    const { transcript = '' } = body;
+    const { transcript = '', model, prompt } = body;
     if (!transcript || typeof transcript !== 'string') {
       return { statusCode: 400, body: 'transcript (string) required' };
     }
 
     const payload = {
-      model: SUMMARIZER_MODEL,
+      model: model || 'mistral-small-latest',
       messages: [
-        { role: 'system', content: SYSTEM },
+        { role: 'system', content: (prompt && String(prompt).trim().length > 0) ? prompt : DEFAULT_PROMPT },
         { role: 'user', content: transcript }
       ],
       temperature: 0.2,

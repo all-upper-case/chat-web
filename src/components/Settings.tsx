@@ -2,11 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { SettingsRow, Message } from '../lib/types';
 
-const MODELS = [
+const MODEL_OPTIONS = [
   { id: 'mistral-large-latest', name: 'Mistral Large' },
+  { id: 'mistral-medium-latest', name: 'Mistral Medium' },
   { id: 'mistral-8b-latest', name: 'Mistral 8B' },
   { id: 'mistral-3b-latest', name: 'Mistral 3B' },
-  { id: 'codestral-latest', name: 'Codestral (code)' },
+  { id: 'magistral-medium-latest', name: 'Magistral Medium' },
+  { id: 'magistral-small-latest', name: 'Magistral Small' },
+  { id: 'codestral-latest', name: 'Codestral' },
   { id: 'pixtral-12b-2409', name: 'Pixtral 12B' }
 ];
 
@@ -25,7 +28,9 @@ export default function Settings({
     model: 'mistral-large-latest',
     temperature: 0.7,
     max_tokens: 2048,
-    safe_prompt: false
+    safe_prompt: false,
+    summarizer_model: 'mistral-small-latest',
+    summarizer_prompt: ''
   });
 
   const [systemPrompt, setSystemPrompt] = useState<string>('');
@@ -35,7 +40,7 @@ export default function Settings({
       const { data: auth } = await supabase.auth.getUser();
       if (!auth?.user) return;
       const { data } = await supabase.from('settings').select('*').eq('user_id', auth.user.id).maybeSingle();
-      if (data) setRow(data as SettingsRow);
+      if (data) setRow(r => ({ ...r, ...(data as SettingsRow) }));
 
       // load system prompt (message idx 0)
       if (conversationId) {
@@ -59,7 +64,9 @@ export default function Settings({
       model: row.model || 'mistral-large-latest',
       temperature: Number(row.temperature ?? 0.7),
       max_tokens: Number(row.max_tokens ?? 2048),
-      safe_prompt: Boolean(row.safe_prompt)
+      safe_prompt: Boolean(row.safe_prompt),
+      summarizer_model: row.summarizer_model ?? 'mistral-small-latest',
+      summarizer_prompt: row.summarizer_prompt ?? ''
     };
     await supabase.from('settings').upsert(payload);
     onChanged();
@@ -98,7 +105,7 @@ export default function Settings({
               value={row.model}
               onChange={(e) => setRow((r) => ({ ...r, model: e.target.value }))}
             >
-              {MODELS.map(m => <option key={m.id} value={m.id}>{m.name} ({m.id})</option>)}
+              {MODEL_OPTIONS.map(m => <option key={m.id} value={m.id}>{m.name} ({m.id})</option>)}
             </select>
           </section>
 
@@ -132,6 +139,26 @@ export default function Settings({
               />
               <span>safe_prompt</span>
             </label>
+          </section>
+
+          {/* Summarizer model */}
+          <section>
+            <div className="font-medium mb-2">Summarizer model</div>
+            <select
+              className="w-full border rounded p-2 mb-4"
+              value={row.summarizer_model ?? 'mistral-small-latest'}
+              onChange={(e) => setRow((r) => ({ ...r, summarizer_model: e.target.value }))}
+            >
+              <option value="mistral-small-latest">Mistral Small (mistral-small-latest)</option>
+              <option value="magistral-small-latest">Magistral Small (magistral-small-latest)</option>
+            </select>
+
+            <div className="font-medium mb-2">Summarizer prompt</div>
+            <textarea
+              className="w-full border rounded p-2 h-48 whitespace-pre-wrap"
+              value={row.summarizer_prompt ?? ''}
+              onChange={(e) => setRow((r) => ({ ...r, summarizer_prompt: e.target.value }))}
+            />
           </section>
 
           <div className="flex gap-2">
